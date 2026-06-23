@@ -1,7 +1,7 @@
 from PIL import Image, ImageDraw
 
 # Load your image (rename it to input.jpg)
-img = Image.open("C:\OlderData\Anand\Personal\Resume\TexansITs\Passport\PassportRenewal2026\AnandmishraPP.jpg")
+img = Image.open("Path\YourPhoto.jpg")
 
 # Convert sizes
 dpi = 300
