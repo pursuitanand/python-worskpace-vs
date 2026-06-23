@@ -4,6 +4,7 @@ import os
 import re
 import csv
 from pathlib import Path
+from urllib.parse import urlparse
 
 WORKSPACE = r"/path/to/workspace"
 
@@ -18,9 +19,24 @@ EXTENSIONS = {
 }
 
 PATTERNS = {
-    "external_script_tag":
-        re.compile(r'<script[^>]*src\s*=\s*["\']([^"\']+)["\']',
-                   re.IGNORECASE),
+    # "external_script_tag":
+    #     re.compile(r'<script[^>]*src\s*=\s*["\']([^"\']+)["\']',
+    #                re.IGNORECASE),
+    "external_script_tag_with_http":
+        re.compile(
+            r'<script[^>]*src\s*=\s*["\'](https?://[^"\']+)["\']',
+            re.IGNORECASE
+        ),
+    "internal_script_tag_self_src":
+        re.compile(
+            r'<script[^>]*src\s*=\s*["\']((?!https?://)[^"\']+)["\']',
+            re.IGNORECASE
+        ),
+    "http_https_url":
+    re.compile(
+        r'https?://[^\s"\'>)]+',
+        re.IGNORECASE
+    ),
 
     "inline_script":
         re.compile(r'<script(?![^>]*src=)[^>]*>',
@@ -69,17 +85,72 @@ def scan_file(file_path):
     findings = []
 
     try:
+        COMMENT_PATTERNS = [
+            r'<!--.*?-->',      # HTML comments
+            r'<%--.*?--%>',     # JSP comments
+            r'/\*.*?\*/'        # JS block comments
+        ]
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            lines = f.readlines()
+            # lines = f.readlines()
+            content= f.read()
+
+            for pattern in COMMENT_PATTERNS:
+                content = re.sub(
+                    pattern,
+                    '',
+                    content,
+                    flags=re.DOTALL
+                )
+            lines = content.splitlines()
+
+        # for lineno, line in enumerate(lines, start=1):
+
+        #     # SKIP JSP DIRECTIVES
+        #     content = re.sub(
+        #         pattern,
+        #         '',
+        #         content,
+        #         flags=re.DOTALL
+        #     )
 
         for lineno, line in enumerate(lines, start=1):
+            
+            # SKIP JSP DIRECTIVES
+            if line.strip().startswith("<%@"):
+                continue
 
-            for match in PATTERNS["external_script_tag"].finditer(line):
+            # for match in PATTERNS["external_script_tag"].finditer(line):
+            #     findings.append([
+            #         file_path,
+            #         lineno,
+            #         "EXTERNAL_SCRIPT",
+            #         match.group(1),
+            #         line.strip()
+            #     ])
+            for match in PATTERNS["external_script_tag_with_http"].finditer(line):
                 findings.append([
                     file_path,
                     lineno,
-                    "EXTERNAL_SCRIPT",
+                    "EXTERNAL_SCRIPT_TAG_WITH_HTTP",
                     match.group(1),
+                    line.strip()
+                ])
+
+            for match in PATTERNS["internal_script_tag_self_src"].finditer(line):
+                findings.append([
+                    file_path,
+                    lineno,
+                    "INTERNAL_SCRIPT_TAG_SELF_SRC",
+                    match.group(1),
+                    line.strip()
+                ])
+            
+            for match in PATTERNS["http_https_url"].finditer(line):
+                findings.append([
+                    file_path,
+                    lineno,
+                    "HTTP_HTTPS_URL",
+                    match.group(0),
                     line.strip()
                 ])
 
@@ -223,6 +294,40 @@ def print_summary(findings):
     print(f"\nTotal Findings: {len(findings)}")
 
 
+def print_domain_summary(findings):
+
+    domains = {}
+
+    for row in findings:
+
+        if row[2] not in (
+            "EXTERNAL_SCRIPT_TAG_WITH_HTTP",
+            "HTTP_HTTPS_URL"
+        ):
+            continue
+
+        url = row[3]
+
+        if not url:
+            continue
+
+        try:
+            domain = urlparse(url).netloc
+
+            domains[domain] = domains.get(domain, 0) + 1
+
+        except Exception:
+            pass
+
+    print("\n==== EXTERNAL DOMAINS ====\n")
+
+    for domain, count in sorted(
+        domains.items(),
+        key=lambda x: x[1],
+        reverse=True
+    ):
+        print(f"{domain:40} {count}")
+
 if __name__ == "__main__":
 
     findings = scan_workspace(WORKSPACE)
@@ -230,5 +335,7 @@ if __name__ == "__main__":
     write_csv(findings)
 
     print_summary(findings)
+    
+    print_domain_summary(findings)
 
     print("\nReport written to csp_scan_report.csv")
